@@ -4,8 +4,9 @@ Telegraf + InfluxDB 2.x + Grafana stack for a Raspberry Pi 4, logging:
 
 - Every 15 minutes from the SolarEdge HD-Wave inverter (via [hd_wave_query.py](hd_wave_query.py)): `ac_power`, `dc_power`, `temp_sink`, `status_text`, `status_vendor`.
 - Every 15 minutes from the Pi itself: CPU usage, memory usage, temperature. (Power consumption is not yet instrumented — see "Adding power consumption" below.)
+- Every 15 minutes from the UPS (via the NUT service already running on the Pi for graceful shutdown): battery charge and line/battery status.
 
-Dashboard is served by Grafana on the LAN. InfluxDB is not exposed outside the Docker network.
+Dashboard is served by Grafana on the LAN, viewable without logging in (read-only). InfluxDB is not exposed outside the Docker network.
 
 ## Files
 
@@ -27,8 +28,9 @@ Dashboard is served by Grafana on the LAN. InfluxDB is not exposed outside the D
    - `INFLUX_TOKEN` — make up any long random string; it's used to auto-provision InfluxDB on first boot and is then shared by Telegraf and Grafana.
    - `INFLUX_ADMIN_PASSWORD`, `GRAFANA_ADMIN_PASSWORD` — pick real passwords.
    - `INVERTER_HOST` / `INVERTER_PORT` — set the inverter's actual address (default port may be ok as-is).
+   - `NUT_TELEGRAF_PASSWORD` — pick a password; it must match the `[telegraf]` user you create in `/etc/nut/upsd.users` (see "Logging UPS status and battery charge" below). Only needed once you've set up NUT.
 3. `docker compose up -d --build`
-4. Browse to `http://<pi-ip>:3000`, log in with `admin` / the `GRAFANA_ADMIN_PASSWORD` you set, **and change it immediately** (it's just seeded from `.env`, not a real per-user account).
+4. Browse to `http://<pi-ip>:3000` — dashboards are viewable immediately with no login (see "Anonymous read-only access" below). To make any change (edit a panel, add a data source), log in with `admin` / the `GRAFANA_ADMIN_PASSWORD` you set, **and change it immediately** (it's just seeded from `.env`, not a real per-user account).
 5. Make sure Docker starts on boot: `sudo systemctl enable docker`.
 
 The `Solar Logging` dashboard should be there already (provisioned automatically) — give it up to 15 minutes after first boot to show real data.
@@ -112,6 +114,31 @@ upsc cyberpower@localhost
 
 **Important caveat:** this only works if the network path between the Pi and the UPS's management card stays powered during the outage. If the switch between them isn't itself on a UPS, the Pi loses visibility into the UPS's status exactly when it matters most — worth checking now, not after the first real outage. Also worth testing the shutdown path deliberately (a controlled test, not waiting for a real outage) before trusting it.
 
+## Logging UPS status and battery charge
+
+The NUT setup above (for graceful shutdown) already has `upsd` running natively on the Pi with live UPS data available via `upsc`. Telegraf has a built-in plugin for this — `inputs.upsd` (added in Telegraf v1.24.0; not to be confused with a plugin literally named "nut", which doesn't exist) — so getting battery charge and status into the same dashboard is mostly config, not new infrastructure.
+
+1. **Add a second, read-only NUT user** for Telegraf, distinct from `upsmon`'s `monuser` and from the UPS's own SNMPv3 credentials — least-privilege, and lets you rotate/revoke it independently. Add to `/etc/nut/upsd.users`:
+   ```
+   [telegraf]
+       password = <a new random password>
+   ```
+   (No `upsmon master` line needed here — that role is only for the shutdown-trigger client.)
+
+2. **Make `upsd` reachable from the Telegraf container.** By default it only listens on `127.0.0.1`, which is fine for `upsmon`/`upsc` running on the same host, but not reachable from inside Docker. In `/etc/nut/upsd.conf`, **replace** the `LISTEN 127.0.0.1 3493` line with just:
+   ```
+   LISTEN 0.0.0.0 3493
+   ```
+   Don't keep both — `upsd` deliberately refuses to bind the wildcard address when a more specific one (`127.0.0.1`) is already bound on the same port (logged as `not listening on 0.0.0.0 port 3493`, not an error, just silently skipped), so having both lines leaves you back on `127.0.0.1` only. A single `0.0.0.0` binding already accepts connections to `127.0.0.1` too, so local `upsc`/`upsmon` keep working unchanged. This exposes the UPS monitor port to the LAN — the same trust boundary already accepted for Grafana's port 3000, not forwarded to the WAN. If you'd rather scope it tighter, bind to the Docker bridge network's gateway address instead of `0.0.0.0` (find it with `docker network inspect solar_logging_default | grep Gateway`).
+
+3. Restart NUT's server: `sudo systemctl restart nut-server`.
+
+4. Set `NUT_TELEGRAF_PASSWORD` in `.env` to the password from step 1, then `docker compose up -d` to pick up the compose and `telegraf.conf` changes (already included in this repo — see `[[inputs.upsd]]` in `telegraf/telegraf.conf`, and the `extra_hosts: host.docker.internal:host-gateway` entry on the `telegraf` service, which is what lets the container reach `upsd` on the Pi itself regardless of the Docker bridge subnet in use).
+
+5. **What to expect.** `inputs.upsd` writes to measurement `upsd`, with `battery_charge_percent` as a numeric field. `docker compose logs telegraf` will show connection/auth errors from the `upsd` plugin if step 1 or 2 above didn't take (e.g. `dial tcp: connect: connection refused` means `upsd` isn't reachable yet, an auth-type error means the `[telegraf]` user/password don't match).
+
+   Status is modeled unusually: rather than one `status` field/tag with a value like `"OL"`, Telegraf emits a **separate tag per active NUT status flag** — `status_OL="true"` while on line, `status_OB="true"` while on battery — and the tag for whichever flag *isn't* currently active is simply absent (not `"false"`). Confirmed by actually unplugging the UPS during testing, not from the plugin's docs (which described it differently and turned out to be inaccurate here). The shipped "UPS Status" panel handles this by querying the last known-OL point and last known-OB point separately, then keeping whichever is more recent (via Flux's `union()` + sort) — that way it reflects true current status even though the visible time range may span both a past "on line" period and a past "on battery" period. Only `OL`/`OB` are tracked; other NUT flags (`LB` low battery, `HB`, `RB`, etc.) aren't wired up — extend the panel's query with a third unioned branch the same way if you need one of those.
+
 ## Adding power consumption later
 
 The Pi 4 has no built-in power sensor, so this metric is deliberately skipped for now — the dashboard has an empty placeholder panel for it. To add it:
@@ -125,6 +152,14 @@ The Pi 4 has no built-in power sensor, so this metric is deliberately skipped fo
      - "/dev/i2c-1:/dev/i2c-1"
    ```
 5. Point the placeholder panel in the dashboard at the new field.
+
+## Anonymous read-only access
+
+Grafana is configured with `GF_AUTH_ANONYMOUS_ENABLED=true` and `GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer`, so anyone who can reach `http://<pi-ip>:3000` sees the dashboards immediately — no account, no password. Editing anything (panels, data sources, settings) still requires logging in as `admin`; a "Sign in" option remains available for that.
+
+This means anyone on your LAN who can reach port 3000 can view the dashboards, same trust boundary already accepted for the rest of this stack (nothing here is meant to survive being exposed to the WAN — don't add a router port-forward for 3000). If you'd rather require a login even for viewing, remove the three `GF_AUTH_ANONYMOUS_*` lines from the `grafana` service in `docker-compose.yml` and re-run `docker compose up -d`.
+
+If `GF_AUTH_ANONYMOUS_ORG_NAME` (`"Main Org."`) doesn't match your Grafana organization's actual name — e.g. if you renamed it — anonymous access won't attach to the right org; check under Administration → Organizations and update the compose file to match.
 
 ## Troubleshooting
 

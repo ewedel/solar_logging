@@ -26,12 +26,17 @@ services:
       INFLUX_BUCKET: ${INFLUX_BUCKET}
       INVERTER_HOST: ${INVERTER_HOST}
       INVERTER_PORT: ${INVERTER_PORT}
+      NUT_TELEGRAF_PASSWORD: ${NUT_TELEGRAF_PASSWORD}
       HOST_PROC: /hostfs/proc
       HOST_SYS: /hostfs/sys
     volumes:
       - ./telegraf/telegraf.conf:/etc/telegraf/telegraf.conf:ro
       - /proc:/hostfs/proc:ro
       - /sys:/hostfs/sys:ro
+    extra_hosts:
+      # Lets the container reach upsd, which runs natively on the Pi host
+      # (see README "Handling power loss" for the NUT setup).
+      - "host.docker.internal:host-gateway"
 
   grafana:
     image: grafana/grafana-oss:11.3.0
@@ -43,6 +48,11 @@ services:
     environment:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
       INFLUX_TOKEN: ${INFLUX_TOKEN}
+      # Read-only dashboard viewing with no login. Admin login is still
+      # required for any change (editing, settings, data sources).
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_NAME: "Main Org."
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
     volumes:
       - grafana-data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
