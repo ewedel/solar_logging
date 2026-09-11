@@ -43,6 +43,14 @@
       "gridPos": { "h": 4, "w": 6, "x": 0, "y": 8 },
       "datasource": { "type": "influxdb", "uid": "influxdb" },
       "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": {
+        "reduceOptions": { "values": false, "calcs": ["lastNotNull"], "fields": "/.*/" },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
       "targets": [
         {
           "query": "from(bucket: \"solar_logging\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"inverter\" and r._field == \"status_text\") |> last()",
@@ -57,6 +65,14 @@
       "gridPos": { "h": 4, "w": 6, "x": 6, "y": 8 },
       "datasource": { "type": "influxdb", "uid": "influxdb" },
       "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": {
+        "reduceOptions": { "values": false, "calcs": ["lastNotNull"], "fields": "/.*/" },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
       "targets": [
         {
           "query": "from(bucket: \"solar_logging\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"inverter\" and r._field == \"status_vendor\") |> last()",
@@ -160,6 +176,14 @@
           ]
         },
         "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "values": false, "calcs": ["lastNotNull"], "fields": "/.*/" },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
       },
       "targets": [
         {
