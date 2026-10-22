@@ -191,6 +191,178 @@
           "refId": "A"
         }
       ]
+    },
+    {
+      "id": 11,
+      "type": "row",
+      "title": "Weather",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 36 },
+      "panels": []
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Cloud Cover vs. AC Power",
+      "description": "Model cloud cover is Open-Meteo at the house (15-minute HRRR-based values). Station cloud cover comes from the SKY_STATION airport ceilometer (or the model when it's stale): FEW 19%, SCT 44%, BKN 75%, OVC 100%.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 37 },
+      "datasource": { "type": "influxdb", "uid": "influxdb" },
+      "fieldConfig": {
+        "defaults": { "unit": "watt" },
+        "overrides": [
+          {
+            "matcher": { "id": "byRegexp", "options": "/cloud/" },
+            "properties": [
+              { "id": "unit", "value": "percent" },
+              { "id": "min", "value": 0 },
+              { "id": "max", "value": 100 },
+              { "id": "custom.axisPlacement", "value": "right" },
+              { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "query": "from(bucket: \"solar_logging\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"inverter\" and r._field == \"ac_power\") |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false) |> keep(columns: [\"_start\", \"_stop\", \"_time\", \"_value\", \"_field\"])",
+          "refId": "A"
+        },
+        {
+          "query": "from(bucket: \"solar_logging\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"weather_model\" and r._field == \"cloud_cover_pct\") |> set(key: \"_field\", value: \"model cloud cover\") |> keep(columns: [\"_start\", \"_stop\", \"_time\", \"_value\", \"_field\"]) |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)",
+          "refId": "B"
+        },
+        {
+          "query": "from(bucket: \"solar_logging\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"weather_obs\" and r._field == \"cloud_cover_pct\") |> set(key: \"_field\", value: \"station cloud cover\") |> keep(columns: [\"_start\", \"_stop\", \"_time\", \"_value\", \"_field\"]) |> group(columns: [\"_field\"]) |> sort(columns: [\"_time\"]) |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Sunlight vs. AC Power",
+      "description": "Open-Meteo modelled irradiance at the house. 'on panels' (GTI) uses PANEL_TILT / PANEL_AZIMUTH from .env; 'horizontal' is GHI. AC power falling well below the GTI curve on a clear day points at soiling, shading or an inverter issue.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 37 },
+      "datasource": { "type": "influxdb", "uid": "influxdb" },
+      "fieldConfig": {
+        "defaults": { "unit": "watt" },
+        "overrides": [
+          {
+            "matcher": { "id": "byRegexp", "options": "/sunlight/" },
+            "properties": [
+              { "id": "unit", "value": "suffix: W/m²" },
+              { "id": "min", "value": 0 },
+              { "id": "custom.axisPlacement", "value": "right" },
+              { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "query": "from(bucket: \"solar_logging\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"inverter\" and r._field == \"ac_power\") |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false) |> keep(columns: [\"_start\", \"_stop\", \"_time\", \"_value\", \"_field\"])",
+          "refId": "A"
+        },
+        {
+          "query": "from(bucket: \"solar_logging\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"weather_model\" and (r._field == \"gti_wm2\" or r._field == \"ghi_wm2\")) |> map(fn: (r) => ({ r with _field: if r._field == \"gti_wm2\" then \"sunlight on panels\" else \"sunlight horizontal\" })) |> keep(columns: [\"_start\", \"_stop\", \"_time\", \"_value\", \"_field\"]) |> group(columns: [\"_field\"]) |> sort(columns: [\"_time\"]) |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "Outside Temperature vs. Heat Sink",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 45 },
+      "datasource": { "type": "influxdb", "uid": "influxdb" },
+      "fieldConfig": {
+        "defaults": { "unit": "fahrenheit" },
+        "overrides": [
+          {
+            "matcher": { "id": "byRegexp", "options": "/temp_sink/" },
+            "properties": [
+              { "id": "unit", "value": "celsius" },
+              { "id": "custom.axisPlacement", "value": "right" }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "query": "from(bucket: \"solar_logging\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"weather_obs\" and r._field == \"temp_f\") |> set(key: \"_field\", value: \"outside\") |> keep(columns: [\"_start\", \"_stop\", \"_time\", \"_value\", \"_field\"]) |> group(columns: [\"_field\"]) |> sort(columns: [\"_time\"]) |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)",
+          "refId": "A"
+        },
+        {
+          "query": "from(bucket: \"solar_logging\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"inverter\" and r._field == \"temp_sink\") |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false) |> keep(columns: [\"_start\", \"_stop\", \"_time\", \"_value\", \"_field\"])",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "Wind",
+      "description": "Direction is where the wind comes from (0/360 = north, 90 = east), drawn as points on the right axis. No direction is logged in calm air.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 45 },
+      "datasource": { "type": "influxdb", "uid": "influxdb" },
+      "fieldConfig": {
+        "defaults": { "unit": "velocitymph", "min": 0 },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "wind_dir_deg" },
+            "properties": [
+              { "id": "displayName", "value": "direction" },
+              { "id": "unit", "value": "degree" },
+              { "id": "min", "value": 0 },
+              { "id": "max", "value": 360 },
+              { "id": "custom.axisPlacement", "value": "right" },
+              { "id": "custom.drawStyle", "value": "points" },
+              { "id": "custom.pointSize", "value": 6 }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "query": "from(bucket: \"solar_logging\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"weather_obs\" and (r._field == \"wind_mph\" or r._field == \"wind_gust_mph\" or r._field == \"wind_dir_deg\")) |> keep(columns: [\"_start\", \"_stop\", \"_time\", \"_value\", \"_field\"]) |> group(columns: [\"_field\"]) |> sort(columns: [\"_time\"]) |> aggregateWindow(every: v.windowPeriod, fn: last, createEmpty: false)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "type": "state-timeline",
+      "title": "Conditions",
+      "gridPos": { "h": 5, "w": 24, "x": 0, "y": 53 },
+      "datasource": { "type": "influxdb", "uid": "influxdb" },
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" } }, "overrides": [] },
+      "options": { "showValue": "auto", "mergeValues": true, "rowHeight": 0.8, "legend": { "showLegend": false } },
+      "targets": [
+        {
+          "query": "from(bucket: \"solar_logging\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"weather_obs\" and r._field == \"conditions\") |> set(key: \"_field\", value: \"conditions\") |> keep(columns: [\"_start\", \"_stop\", \"_time\", \"_value\", \"_field\"]) |> group(columns: [\"_field\"]) |> sort(columns: [\"_time\"])",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 17,
+      "type": "state-timeline",
+      "title": "Weather Station Used",
+      "description": "Which station supplied the measurements (temperature, humidity, wind), and which supplied the sky fields (conditions, cloud cover, visibility). 'model' means Open-Meteo filled in because no station had a fresh reading.",
+      "gridPos": { "h": 5, "w": 24, "x": 0, "y": 58 },
+      "datasource": { "type": "influxdb", "uid": "influxdb" },
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" } }, "overrides": [] },
+      "options": { "showValue": "auto", "mergeValues": true, "rowHeight": 0.8, "legend": { "showLegend": false } },
+      "targets": [
+        {
+          "query": "from(bucket: \"solar_logging\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"weather_obs\" and r._field == \"obs_age_min\") |> map(fn: (r) => ({ _time: r._time, _field: \"measurements\", _value: r.station + \" (\" + r.source + \")\" })) |> group(columns: [\"_field\"]) |> sort(columns: [\"_time\"])",
+          "refId": "A"
+        },
+        {
+          "query": "from(bucket: \"solar_logging\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"weather_obs\" and r._field == \"obs_age_min\") |> map(fn: (r) => ({ _time: r._time, _field: \"sky\", _value: r.sky_station })) |> group(columns: [\"_field\"]) |> sort(columns: [\"_time\"])",
+          "refId": "B"
+        }
+      ]
     }
   ]
 }

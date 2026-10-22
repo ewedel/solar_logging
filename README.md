@@ -5,6 +5,7 @@ Telegraf + InfluxDB 2.x + Grafana stack for a Raspberry Pi 4, logging:
 - Every 15 minutes from the SolarEdge HD-Wave inverter (via [hd_wave_query.py](hd_wave_query.py)): `ac_power`, `dc_power`, `temp_sink`, `status_text`, `status_vendor`.
 - Every 15 minutes from the Pi itself: CPU usage, memory usage, temperature. (Power consumption is not yet instrumented — see "Adding power consumption" below.)
 - Every 15 minutes from the UPS (via the NUT service already running on the Pi for graceful shutdown): battery charge and line/battery status.
+- Every 15 minutes, weather at the house (NWS station observations + Open-Meteo cloud cover and solar irradiance), for correlating with the inverter. The same service shows a tablet-friendly weather page on port 8080 — see "Weather" below.
 
 Dashboard is served by Grafana on the LAN, viewable without logging in (read-only). InfluxDB is not exposed outside the Docker network.
 
@@ -13,13 +14,17 @@ Dashboard is served by Grafana on the LAN, viewable without logging in (read-onl
 | Path | Purpose |
 |---|---|
 | `hd_wave_query.py` | Existing Modbus TCP reader for the inverter. Unmodified; imported by the Telegraf wrapper. |
-| `docker-compose.yml` | The three services: `influxdb`, `telegraf`, `grafana`. |
+| `docker-compose.yml` | The four services: `influxdb`, `telegraf`, `grafana`, `weather`. |
 | `.env.example` | Template for secrets/config. Copy to `.env` and fill in real values — `.env` is git-ignored. |
 | `telegraf/Dockerfile` | Telegraf image + Python 3 + `pyModbusTCP`, so it can run the inverter poll itself. |
 | `telegraf/telegraf.conf` | Collection config: inverter poll + Pi host metrics, both on a shared 15-minute interval. |
 | `telegraf/hd_wave_telegraf.py` | Flattens `hd_wave_query.py`'s JSON into the shape Telegraf's parser expects. |
 | `grafana/provisioning/` | Auto-configures the InfluxDB datasource and loads the starter dashboard on first boot. |
-| `grafana/dashboards/solar_logging.json` | Starter dashboard: inverter panels + Pi health panels. |
+| `grafana/dashboards/solar_logging.json` | Starter dashboard: inverter panels, Pi health panels, UPS panels and a Weather row. |
+| `weather/weather_service.py` | Weather collector (NWS + Open-Meteo, with station failover) and the web server for the tablet page and Telegraf's JSON. |
+| `weather/static/index.html` | The tablet page: current conditions, wind compass rose, today's forecast, next 12 hours. |
+| `weather/find_station.py` | Copy of `weather_station/find_station.py`, used to search for a replacement station when every configured one fails. Re-copy it here after changing the original. |
+| `weather/Dockerfile` | `python:3.12-slim` + `requests`. |
 
 ## Deploying to the Pi
 
@@ -28,6 +33,7 @@ Dashboard is served by Grafana on the LAN, viewable without logging in (read-onl
    - `INFLUX_TOKEN` — make up any long random string; it's used to auto-provision InfluxDB on first boot and is then shared by Telegraf and Grafana.
    - `INFLUX_ADMIN_PASSWORD`, `GRAFANA_ADMIN_PASSWORD` — pick real passwords.
    - `INVERTER_HOST` / `INVERTER_PORT` — set the inverter's actual address (default port may be ok as-is).
+   - `WEATHER_*`, `SKY_STATION`, `NWS_USER_AGENT`, `PANEL_*` — see "Weather" below.
    - `NUT_TELEGRAF_PASSWORD` — pick a password; it must match the `[telegraf]` user you create in `/etc/nut/upsd.users` (see "Logging UPS status and battery charge" below). Only needed once you've set up NUT.
 3. `docker compose up -d --build`
 4. Browse to `http://<pi-ip>:3000` — dashboards are viewable immediately with no login (see "Anonymous read-only access" below). To make any change (edit a panel, add a data source), log in with `admin` / the `GRAFANA_ADMIN_PASSWORD` you set, **and change it immediately** (it's just seeded from `.env`, not a real per-user account).
@@ -37,7 +43,7 @@ The `Solar Logging` dashboard should be there already (provisioned automatically
 
 ## Verifying it's working
 
-- `docker compose ps` — all three containers should be `running`.
+- `docker compose ps` — all four containers should be `running`.
 - `docker compose logs -f telegraf` — watch for errors from the inverter poll (a Modbus connection failure — wrong host/port, inverter or DMZ firewall down — shows up here immediately) and confirm both the inverter and Pi-metrics inputs are flushing every 15 minutes.
 - In Grafana: Settings → Data Sources → InfluxDB should show a green "datasource is working" check.
 - Restart the stack (`docker compose down && docker compose up -d`) and confirm InfluxDB still has its data and Grafana still has its dashboard — both come from named Docker volumes, not the container filesystem.
@@ -152,6 +158,40 @@ The Pi 4 has no built-in power sensor, so this metric is deliberately skipped fo
      - "/dev/i2c-1:/dev/i2c-1"
    ```
 5. Point the placeholder panel in the dashboard at the new field.
+
+## Weather
+
+The `weather` container polls the weather APIs on its own timers, keeps the latest values in memory (nothing is written to the SD card), and serves:
+
+| URL | What |
+|---|---|
+| `http://<pi-ip>:8080/` | Tablet page: current conditions, wind compass rose, today's NWS forecast, next 12 hours, sunrise/sunset, active NWS alerts. Refreshes itself every minute. |
+| `/api/current.json` | Everything the page shows. |
+| `/api/obs.json`, `/api/model.json` | Flat JSON for Telegraf, which stores it as the `weather_obs` and `weather_model` measurements every 15 minutes. These return HTTP 503 when the service has nothing fresh, so no stale point gets logged. |
+
+**Two data sources, each used for what it does best:**
+
+- **NWS (api.weather.gov)**: measured temperature, humidity, dew point, wind, gusts and pressure from real stations; conditions text, cloud layers and visibility from an airport (ASOS) station; the forecast; alerts.
+- **Open-Meteo**: cloud cover (total and low/mid/high), solar irradiance (horizontal GHI, and GTI on the plane of the panels from `PANEL_TILT`/`PANEL_AZIMUTH`), sunrise/sunset. It's also the last-resort fallback for every other value.
+
+**Station choice and failover**, rechecked every 5 minutes:
+
+1. `WEATHER_STATION` (LOAC1, the Los Altos RAWS station, the best match for the local microclimate) supplies the measurements, as long as its latest reading is under 90 minutes old and its temperature passed QC.
+2. If it's stale or down, the stations in `WEATHER_FALLBACK_STATIONS` are tried in order (AW020, then KNUQ). A value the chosen station doesn't report (LOAC1 has no barometer) is filled in from the next usable station. Wind speed, gust and direction always come from one station together, so a calm reading never picks up a direction from elsewhere.
+3. If every configured station fails and `WEATHER_FALLBACK_AUTO=true`, `find_station.py` searches for the best nearby station. The search makes many requests, so its answer is reused for 6 hours (1 hour if it found nothing).
+4. If there's still nothing usable, the Open-Meteo model values are used and the point is tagged `station=model`.
+
+LOAC1 and AW020 don't report conditions, cloud cover or visibility (only airport stations have a ceilometer and present-weather sensor), so those **sky fields** always come from `SKY_STATION` (KNUQ), or from Open-Meteo when KNUQ is stale. The primary station is tried first again on every cycle, so the service returns to it as soon as it recovers.
+
+Every `weather_obs` point is tagged with `station`, `source` (`primary` / `fallback` / `auto` / `model`) and `sky_station`, and carries `obs_age_min`. The tablet page footer and the "Weather Station Used" panel in Grafana show which source is in use. NWS's station feed sometimes falls hours behind for every station at once; when that happens the page shows `model` until it catches up.
+
+**Using it on a tablet:** open `http://<pi-ip>:8080/`, use the browser's "Add to Home screen" to get a full-screen app icon, and turn on the tablet's keep-screen-on (or the browser's stay-awake) setting. The page follows the tablet's light/dark setting. It needs no internet resources of its own: everything comes from the Pi.
+
+**Checking it:**
+
+- `docker compose logs -f weather`: each change of source is logged with the stations skipped and why.
+- `curl http://<pi-ip>:8080/api/obs.json`: every number should have a decimal point (InfluxDB locks a field's type on its first write; see the UPS `force_float` note above).
+- `docker compose logs -f telegraf`: the two `inputs.http` inputs should gather without errors on each 15-minute tick.
 
 ## Anonymous read-only access
 

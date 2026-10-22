@@ -1,0 +1,432 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0e1116">
+<link rel="manifest" href="/manifest.json">
+<title>Home Weather</title>
+<style>
+  :root {
+    --bg: #0e1116;
+    --card: #171b22;
+    --line: #2a303a;
+    --text: #e8ebf0;
+    --muted: #8b93a1;
+    --accent: #5fb3ff;
+    --accent-soft: rgba(95, 179, 255, 0.18);
+    --gust: #ffb547;
+    --warn: #ffb547;
+    --alert-bg: #5a1414;
+    --alert-text: #ffd9d9;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #eef1f5;
+      --card: #ffffff;
+      --line: #d6dbe3;
+      --text: #141821;
+      --muted: #5c6574;
+      --accent: #1a73d9;
+      --accent-soft: rgba(26, 115, 217, 0.14);
+      --gust: #c77700;
+      --warn: #b36b00;
+      --alert-bg: #fde3e3;
+      --alert-text: #7a1010;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    padding: max(12px, env(safe-area-inset-top)) 16px 16px;
+    font-variant-numeric: tabular-nums;
+  }
+  header {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 12px; flex-wrap: wrap; margin-bottom: 12px;
+  }
+  header h1 { font-size: 20px; font-weight: 600; margin: 0; }
+  #clock { font-size: 28px; font-weight: 600; }
+  #updated { color: var(--muted); font-size: 14px; }
+  #updated.stale { color: var(--warn); font-weight: 600; }
+  #alerts:empty { display: none; }
+  .alert {
+    background: var(--alert-bg); color: var(--alert-text);
+    border-radius: 10px; padding: 10px 14px; margin-bottom: 10px; font-weight: 600;
+  }
+  .alert small { display: block; font-weight: 400; opacity: 0.9; }
+  main {
+    display: grid; gap: 12px;
+    grid-template-columns: 1.1fr 1fr 1.2fr;
+    grid-template-areas: "now wind today" "hourly hourly hourly";
+  }
+  .card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 14px; padding: 16px; min-width: 0;
+  }
+  .card h2 {
+    margin: 0 0 10px; font-size: 13px; font-weight: 600; letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--muted);
+  }
+  #now { grid-area: now; }
+  #wind { grid-area: wind; display: flex; flex-direction: column; align-items: center; }
+  #today { grid-area: today; }
+  #hourly { grid-area: hourly; }
+
+  .big { display: flex; align-items: center; gap: 14px; }
+  .big .icon { font-size: 64px; line-height: 1; }
+  .big .temp { font-size: 76px; font-weight: 300; line-height: 1; }
+  .big .temp sup { font-size: 32px; vertical-align: top; }
+  .conditions { font-size: 22px; margin: 8px 0 2px; }
+  .feels { color: var(--muted); margin-bottom: 14px; }
+  .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px; }
+  .stat .label { color: var(--muted); font-size: 13px; }
+  .stat .value { font-size: 20px; font-weight: 500; }
+  .trend { font-size: 15px; color: var(--muted); }
+
+  #rose { width: 100%; max-width: 300px; height: auto; display: block; }
+  #rose .ring { fill: none; stroke: var(--line); stroke-width: 2; }
+  #rose .tick { stroke: var(--muted); stroke-width: 1.5; }
+  #rose .tick.major { stroke: var(--text); stroke-width: 2.5; }
+  #rose .lbl { fill: var(--muted); font-size: 12px; text-anchor: middle; dominant-baseline: central; }
+  #rose .lbl.major { fill: var(--text); font-size: 17px; font-weight: 700; }
+  #rose .track { fill: none; stroke: var(--accent-soft); stroke-width: 7; }
+  #rose .sustained { fill: none; stroke: var(--accent); stroke-width: 7; stroke-linecap: round; }
+  #rose .gust { fill: none; stroke: var(--gust); stroke-width: 7; stroke-linecap: round; opacity: 0.85; }
+  #rose .trail { fill: var(--accent); }
+  #rose .arrow { fill: var(--accent); stroke: var(--card); stroke-width: 2; }
+  #needle { transition: transform 1.2s ease-in-out; transform-origin: 120px 120px; }
+  #rose .speed { fill: var(--text); font-size: 44px; font-weight: 600; text-anchor: middle; }
+  #rose .unit { fill: var(--muted); font-size: 13px; text-anchor: middle; }
+  #rose .gusttxt { fill: var(--gust); font-size: 14px; font-weight: 600; text-anchor: middle; }
+  .wind-from { margin-top: 6px; font-size: 18px; }
+  .wind-note { color: var(--muted); font-size: 13px; text-align: center; }
+
+  .period { padding: 10px 0; border-top: 1px solid var(--line); }
+  .period:first-of-type { border-top: 0; padding-top: 0; }
+  .period .head { display: flex; align-items: center; gap: 10px; }
+  .period .head .icon { font-size: 30px; }
+  .period .name { font-weight: 600; font-size: 18px; }
+  .period .hilo { margin-left: auto; font-size: 22px; font-weight: 500; }
+  .period .hilo.lo { color: var(--accent); }
+  .period .short { color: var(--muted); }
+  .period .detail { font-size: 14px; margin-top: 4px; }
+  .sun { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 12px; padding-top: 12px;
+         border-top: 1px solid var(--line); }
+
+  .strip { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: thin; }
+  .hour {
+    flex: 0 0 78px; text-align: center; padding: 8px 4px; border-radius: 10px;
+    background: color-mix(in srgb, var(--bg) 50%, var(--card));
+  }
+  .hour .t { color: var(--muted); font-size: 13px; }
+  .hour .icon { font-size: 26px; margin: 2px 0; }
+  .hour .temp { font-size: 20px; font-weight: 600; }
+  .hour .sub { font-size: 12px; color: var(--muted); }
+  .hour .warr { display: inline-block; }
+  .sky-bar { height: 4px; border-radius: 2px; background: var(--accent-soft); margin: 4px 6px 0; overflow: hidden; }
+  .sky-bar i { display: block; height: 100%; background: var(--muted); }
+
+  footer { margin-top: 12px; color: var(--muted); font-size: 12px; display: flex;
+           justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .muted { color: var(--muted); }
+
+  @media (max-width: 1000px) {
+    main { grid-template-columns: 1fr 1fr; grid-template-areas: "now wind" "today today" "hourly hourly"; }
+  }
+  @media (max-width: 620px) {
+    main { grid-template-columns: 1fr; grid-template-areas: "now" "wind" "today" "hourly"; }
+    .big .temp { font-size: 64px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="place">Weather</h1>
+  <span id="updated">Loading…</span>
+  <span id="clock"></span>
+</header>
+<div id="alerts"></div>
+<main>
+  <section class="card" id="now">
+    <h2>Now</h2>
+    <div class="big"><span class="icon" id="now-icon"></span><span class="temp" id="now-temp">--</span></div>
+    <div class="conditions" id="now-cond">&nbsp;</div>
+    <div class="feels" id="now-feels">&nbsp;</div>
+    <div class="stats">
+      <div class="stat"><div class="label">Humidity</div><div class="value" id="s-rh">--</div></div>
+      <div class="stat"><div class="label">Dew point</div><div class="value" id="s-dew">--</div></div>
+      <div class="stat"><div class="label">Pressure</div><div class="value" id="s-pres">--</div></div>
+      <div class="stat"><div class="label">Visibility</div><div class="value" id="s-vis">--</div></div>
+      <div class="stat"><div class="label">Cloud cover</div><div class="value" id="s-cloud">--</div></div>
+      <div class="stat"><div class="label">Sunlight (on panels)</div><div class="value" id="s-gti">--</div></div>
+    </div>
+  </section>
+
+  <section class="card" id="wind">
+    <h2>Wind</h2>
+    <svg id="rose" viewBox="0 0 240 240" role="img" aria-label="Wind compass">
+      <g id="ticks"></g>
+      <circle class="track" cx="120" cy="120" r="112"></circle>
+      <path class="gust" id="gust-arc" d=""></path>
+      <path class="sustained" id="speed-arc" d=""></path>
+      <g id="trail"></g>
+      <g id="needle">
+        <!-- Points inward from the edge: the wind blows FROM where the arrow sits -->
+        <path class="arrow" d="M120 64 L106 30 L120 38 L134 30 Z"></path>
+      </g>
+      <text class="speed" id="speed" x="120" y="130">--</text>
+      <text class="unit" id="unit" x="120" y="150">mph</text>
+      <text class="gusttxt" id="gusttxt" x="120" y="170"></text>
+    </svg>
+    <div class="wind-from" id="wind-from">&nbsp;</div>
+    <div class="wind-note">Arrow shows where the wind comes from · ring fills to 40 mph · dots: last hour</div>
+  </section>
+
+  <section class="card" id="today">
+    <h2>Today</h2>
+    <div id="periods"></div>
+    <div class="sun" id="sun"></div>
+  </section>
+
+  <section class="card" id="hourly">
+    <h2>Next 12 hours</h2>
+    <div class="strip" id="strip"></div>
+  </section>
+</main>
+<footer>
+  <span id="source"></span>
+  <span>Weather data: National Weather Service, Open-Meteo.com</span>
+</footer>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const RING_MAX_MPH = 40;
+const STALE_MIN = 20;
+const POINTS = ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"];
+let data = null;
+let needleAngle = null;
+
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (c) =>
+    ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+}
+const r0 = (v) => (v == null ? "--" : Math.round(v));
+const fmtTime = (ms) => new Date(ms).toLocaleTimeString([], {hour: "numeric", minute: "2-digit"});
+const fmtHour = (ms) => new Date(ms).toLocaleTimeString([], {hour: "numeric"});
+const compassPoint = (deg) => POINTS[Math.round(((deg % 360) + 360) % 360 / 22.5) % 16];
+const pointToDeg = (p) => { const i = POINTS.indexOf(p); return i < 0 ? null : i * 22.5; };
+
+// NWS icon keys (and the Open-Meteo stand-ins) -> emoji
+function icon(key, isDay = true) {
+  if (!key) return "";
+  const k = key.replace(/^wind_/, "");
+  if (k.startsWith("tsra")) return "⛈️";
+  if (k.startsWith("fzra") || k.startsWith("ra_fzra") || k.startsWith("snow_fzra")) return "🧊";
+  if (k.startsWith("snow") || k.startsWith("blizzard") || k.startsWith("sleet") || k.startsWith("rain_snow")) return "🌨️";
+  if (k.startsWith("rain") || k.startsWith("ra")) return "🌧️";
+  if (k === "fog" || k === "haze" || k === "smoke" || k === "dust") return "🌫️";
+  if (k === "tornado" || k === "hurricane" || k === "tropical_storm") return "🌀";
+  if (k === "hot") return "🥵";
+  if (k === "cold") return "🥶";
+  if (k === "skc") return isDay ? "☀️" : "🌙";
+  if (k === "few") return isDay ? "🌤️" : "🌙";
+  if (k === "sct") return isDay ? "⛅" : "☁️";
+  if (k === "bkn") return isDay ? "🌥️" : "☁️";
+  if (k === "ovc") return "☁️";
+  return "";
+}
+
+// ----- compass rose -----
+function polar(deg, r) {
+  const a = (deg - 90) * Math.PI / 180;
+  return [120 + r * Math.cos(a), 120 + r * Math.sin(a)];
+}
+function arc(fromDeg, toDeg, r) {
+  if (toDeg - fromDeg <= 0.5) return "";
+  toDeg = Math.min(toDeg, fromDeg + 359.9);
+  const [x1, y1] = polar(fromDeg, r), [x2, y2] = polar(toDeg, r);
+  return `M${x1.toFixed(2)} ${y1.toFixed(2)} A${r} ${r} 0 ${toDeg - fromDeg > 180 ? 1 : 0} 1 ${x2.toFixed(2)} ${y2.toFixed(2)}`;
+}
+function buildRose() {
+  let html = '<circle class="ring" cx="120" cy="120" r="100"></circle>';
+  for (let i = 0; i < 16; i++) {
+    const deg = i * 22.5, major = i % 4 === 0, mid = i % 2 === 0;
+    const [x1, y1] = polar(deg, 100), [x2, y2] = polar(deg, major ? 88 : mid ? 92 : 95);
+    html += `<line class="tick${major ? " major" : ""}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"></line>`;
+    if (mid) {
+      const [lx, ly] = polar(deg, major ? 76 : 80);
+      html += `<text class="lbl${major ? " major" : ""}" x="${lx}" y="${ly}">${POINTS[i]}</text>`;
+    }
+  }
+  $("ticks").innerHTML = html;
+}
+function setNeedle(deg) {
+  // Turn the short way round, keeping a running angle so 350° -> 10° doesn't spin backwards
+  const needle = $("needle");
+  if (needleAngle == null) {
+    // First reading: jump straight there instead of swinging round from north
+    needleAngle = deg;
+    needle.style.transition = "none";
+    needle.style.transform = `rotate(${needleAngle}deg)`;
+    needle.getBoundingClientRect();
+    needle.style.transition = "";
+    return;
+  }
+  needleAngle += ((deg - needleAngle) % 360 + 540) % 360 - 180;
+  needle.style.transform = `rotate(${needleAngle}deg)`;
+}
+function renderWind(obs, trail) {
+  const mph = obs?.wind_mph, gust = obs?.wind_gust_mph, dir = obs?.wind_dir_deg;
+  const calm = mph == null || mph < 1;
+  $("speed").textContent = mph == null ? "--" : calm ? "Calm" : Math.round(mph);
+  $("speed").style.fontSize = calm && mph != null ? "34px" : "";
+  $("unit").textContent = calm ? "" : "mph";
+  const showGust = gust != null && mph != null && gust > mph + 1;
+  $("gusttxt").textContent = showGust ? `gusts ${Math.round(gust)}` : "";
+  $("speed-arc").setAttribute("d", arc(0, 360 * Math.min(mph || 0, RING_MAX_MPH) / RING_MAX_MPH, 112));
+  $("gust-arc").setAttribute("d", showGust ? arc(0, 360 * Math.min(gust, RING_MAX_MPH) / RING_MAX_MPH, 112) : "");
+  $("needle").style.display = calm || dir == null ? "none" : "";
+  if (!calm && dir != null) setNeedle(dir);
+  $("wind-from").textContent = calm ? (mph == null ? "No wind data" : "Calm")
+    : dir == null ? `${Math.round(mph)} mph` : `From the ${compassPoint(dir)} (${Math.round(dir)}°)`;
+  const now = Date.now();
+  $("trail").innerHTML = (trail || []).filter((p) => p.mph == null || p.mph >= 1).map((p) => {
+    const [x, y] = polar(p.dir, 100);
+    const op = Math.max(0.15, 0.7 - (now - p.t) / 3600000 * 0.55);
+    return `<circle class="trail" cx="${x}" cy="${y}" r="4" opacity="${op.toFixed(2)}"></circle>`;
+  }).join("");
+}
+
+// ----- panels -----
+function renderNow(d) {
+  const o = d.obs;
+  if (!o) { $("now-cond").textContent = "No current observation"; return; }
+  $("now-icon").textContent = icon(o.icon, o.is_day !== false);
+  $("now-temp").innerHTML = o.temp_f == null ? "--" : `${Math.round(o.temp_f)}<sup>°F</sup>`;
+  $("now-cond").textContent = o.conditions || " ";
+  $("now-feels").textContent = o.feels_like_f != null && o.temp_f != null
+    && Math.abs(o.feels_like_f - o.temp_f) >= 2 ? `Feels like ${Math.round(o.feels_like_f)}°` : " ";
+  $("s-rh").textContent = o.rh_pct == null ? "--" : `${Math.round(o.rh_pct)}%`;
+  $("s-dew").textContent = o.dewpoint_f == null ? "--" : `${Math.round(o.dewpoint_f)}°`;
+  let trend = "";
+  if (o.pressure_trend != null) {
+    trend = o.pressure_trend > 0.02 ? " ↑" : o.pressure_trend < -0.02 ? " ↓" : " →";
+  }
+  $("s-pres").innerHTML = o.pressure_inhg == null ? "--"
+    : `${o.pressure_inhg.toFixed(2)} <span class="trend">inHg${trend}</span>`;
+  $("s-vis").textContent = o.visibility_mi == null ? "--"
+    : o.visibility_mi >= 10 ? "10+ mi" : `${o.visibility_mi.toFixed(1)} mi`;
+  $("s-cloud").textContent = o.cloud_cover_pct == null ? "--" : `${Math.round(o.cloud_cover_pct)}%`;
+  const s = d.solar;
+  $("s-gti").innerHTML = s?.gti_wm2 == null ? "--" : `${Math.round(s.gti_wm2)} <span class="trend">W/m²</span>`;
+}
+
+function renderToday(d) {
+  const periods = (d.forecast || []).slice(0, 2);
+  $("periods").innerHTML = periods.length ? periods.map((p) => `
+    <div class="period">
+      <div class="head">
+        <span class="icon">${icon(p.icon, p.is_day)}</span>
+        <span class="name">${esc(p.name)}</span>
+        <span class="hilo${p.is_day ? "" : " lo"}">${p.is_day ? "High" : "Low"} ${r0(p.temp_f)}°</span>
+      </div>
+      <div class="short">${esc(p.short)}${p.pop_pct ? ` · ${p.pop_pct}% precip` : ""} · ${esc(p.wind)}</div>
+      <div class="detail">${esc(p.detailed)}</div>
+    </div>`).join("") : '<div class="muted">Forecast not available yet</div>';
+  const today = (d.daily || [])[0];
+  const s = d.solar;
+  const parts = [];
+  if (today) parts.push(`<span>🌅 ${fmtTime(today.sunrise)}</span>`, `<span>🌇 ${fmtTime(today.sunset)}</span>`);
+  if (s && s.cloud_low_pct != null) {
+    parts.push(`<span class="muted">Clouds low/mid/high: ${r0(s.cloud_low_pct)}/${r0(s.cloud_mid_pct)}/${r0(s.cloud_high_pct)}%</span>`);
+  }
+  $("sun").innerHTML = parts.join("");
+}
+
+function renderHourly(d) {
+  const model = new Map((d.model_hourly || []).map((h) => [h.start, h]));
+  const hours = d.hourly || [];
+  $("strip").innerHTML = hours.length ? hours.map((h) => {
+    const m = model.get(h.start);
+    const cover = m?.cloud_cover_pct;
+    const wdeg = pointToDeg(h.wind_dir);
+    // The arrow points where the wind is going (from + 180°), like a weather map
+    const arrow = wdeg == null ? "" : `<span class="warr" style="transform: rotate(${wdeg + 180}deg)">↑</span>`;
+    return `<div class="hour" title="${esc(h.short)}">
+      <div class="t">${fmtHour(h.start)}</div>
+      <div class="icon">${icon(h.icon, h.is_day)}</div>
+      <div class="temp">${r0(h.temp_f)}°</div>
+      <div class="sub">${h.pop_pct ? `💧${h.pop_pct}%` : "&nbsp;"}</div>
+      <div class="sub">${arrow} ${esc((h.wind || "").replace(" mph", ""))}</div>
+      <div class="sky-bar" title="Cloud cover ${cover ?? "?"}%"><i style="width:${cover ?? 0}%"></i></div>
+    </div>`;
+  }).join("") : '<div class="muted">Hourly forecast not available yet</div>';
+}
+
+function renderAlerts(d) {
+  $("alerts").innerHTML = (d.alerts || []).map((a) =>
+    `<div class="alert">⚠️ ${esc(a.event)}<small>${esc(a.headline)}</small></div>`).join("");
+}
+
+function renderSource(d) {
+  const o = d.obs;
+  if (!o) { $("source").textContent = "No observation source available"; return; }
+  let s = `Station ${o.station}${o.station_name ? ` (${o.station_name})` : ""} · ${o.source}`;
+  if (o.sky_station && o.sky_station !== o.station) s += ` · sky from ${o.sky_station}`;
+  if (o.obs_age_min != null) s += ` · reading ${Math.round(o.obs_age_min)} min old`;
+  if (o.skipped?.length) s += ` · skipped ${o.skipped.map((k) => `${k.station}: ${k.reason}`).join("; ")}`;
+  $("source").textContent = s;
+  $("place").textContent = d.place ? `Weather · ${d.place}` : "Weather";
+}
+
+function renderAge() {
+  const el = $("updated");
+  if (!data) return;
+  if (!data.obs) {
+    el.textContent = "Waiting for the first observation…";
+    el.classList.add("stale");
+    return;
+  }
+  const mins = (Date.now() - data.obs.updated) / 60000;
+  el.textContent = mins < 1 ? "Updated just now" : `Updated ${Math.round(mins)} min ago`;
+  el.classList.toggle("stale", mins > STALE_MIN || !data.obs);
+}
+
+async function refresh() {
+  try {
+    const res = await fetch("/api/current.json", {cache: "no-store"});
+    if (!res.ok) throw new Error(res.status);
+    data = await res.json();
+    renderNow(data);
+    renderWind(data.obs, data.wind_trail);
+    renderToday(data);
+    renderHourly(data);
+    renderAlerts(data);
+    renderSource(data);
+  } catch (e) {
+    $("updated").textContent = "Can't reach the weather service";
+    $("updated").classList.add("stale");
+    return;
+  }
+  renderAge();
+}
+
+function tick() {
+  $("clock").textContent = new Date().toLocaleTimeString([], {hour: "numeric", minute: "2-digit"});
+  renderAge();
+}
+
+buildRose();
+refresh();
+tick();
+setInterval(refresh, 60000);
+setInterval(tick, 15000);
+</script>
+</body>
+</html>

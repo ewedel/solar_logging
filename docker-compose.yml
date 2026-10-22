@@ -20,6 +20,7 @@ services:
     restart: unless-stopped
     depends_on:
       - influxdb
+      - weather
     environment:
       INFLUX_TOKEN: ${INFLUX_TOKEN}
       INFLUX_ORG: ${INFLUX_ORG}
@@ -37,6 +38,24 @@ services:
       # Lets the container reach upsd, which runs natively on the Pi host
       # (see README "Handling power loss" for the NUT setup).
       - "host.docker.internal:host-gateway"
+
+  weather:
+    # NWS + Open-Meteo collector and the tablet display page (port 8080).
+    # Keeps data in memory only; Telegraf polls it and writes to InfluxDB.
+    build: weather
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      WEATHER_LAT: ${WEATHER_LAT}
+      WEATHER_LON: ${WEATHER_LON}
+      WEATHER_STATION: ${WEATHER_STATION}
+      WEATHER_FALLBACK_STATIONS: ${WEATHER_FALLBACK_STATIONS:-}
+      SKY_STATION: ${SKY_STATION:-}
+      WEATHER_FALLBACK_AUTO: ${WEATHER_FALLBACK_AUTO:-true}
+      NWS_USER_AGENT: ${NWS_USER_AGENT}
+      PANEL_TILT: ${PANEL_TILT:-20}
+      PANEL_AZIMUTH: ${PANEL_AZIMUTH:-0}
 
   grafana:
     image: grafana/grafana-oss:11.3.0
