@@ -147,7 +147,7 @@ The NUT setup above (for graceful shutdown) already has `upsd` running natively 
 
 ## Adding power consumption later
 
-The Pi 4 has no built-in power sensor, so this metric is deliberately skipped for now — the dashboard has an empty placeholder panel for it. To add it:
+The Pi 4 has no built-in power sensor, so this metric is deliberately skipped for now. To add it:
 
 1. Wire up an INA219 or INA260 I2C power-monitor HAT.
 2. Write a small reader script (e.g. using `adafruit-circuitpython-ina219`) that prints flat JSON like `{"power_w": 12.3}`, following the exact same pattern as `telegraf/hd_wave_telegraf.py`.
@@ -157,7 +157,7 @@ The Pi 4 has no built-in power sensor, so this metric is deliberately skipped fo
    devices:
      - "/dev/i2c-1:/dev/i2c-1"
    ```
-5. Point the placeholder panel in the dashboard at the new field.
+5. Add a timeseries panel to the dashboard (unit `watt`) querying the new field.
 
 ## Weather
 

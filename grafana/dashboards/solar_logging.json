@@ -23,15 +23,16 @@
       ]
     },
     {
-      "id": 2,
+      "id": 18,
       "type": "timeseries",
-      "title": "Heat Sink Temperature",
+      "title": "AC Power per Sunlight",
+      "description": "AC power divided by Open-Meteo's modelled irradiance on the panels (GTI), i.e. the array's effective area in m². Points with GTI under 50 W/m² (dawn, dusk, night) are dropped. Expect noise under broken cloud, since GTI is a model rather than a measurement at the house; a sustained drop on clear days points at soiling, shading or an inverter issue.",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
       "datasource": { "type": "influxdb", "uid": "influxdb" },
-      "fieldConfig": { "defaults": { "unit": "celsius" }, "overrides": [] },
+      "fieldConfig": { "defaults": { "unit": "suffix: W per W/m²", "min": 0, "custom": { "insertNulls": 3600000 } }, "overrides": [] },
       "targets": [
         {
-          "query": "from(bucket: \"solar_logging\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"inverter\" and r._field == \"temp_sink\") |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)",
+          "query": "w = if int(v: v.windowPeriod) > int(v: 15m) then v.windowPeriod else 15m\nac = from(bucket: \"solar_logging\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"inverter\" and r._field == \"ac_power\") |> keep(columns: [\"_start\", \"_stop\", \"_time\", \"_value\"]) |> group() |> aggregateWindow(every: w, fn: mean, createEmpty: false)\ngti = from(bucket: \"solar_logging\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"weather_model\" and r._field == \"gti_wm2\") |> keep(columns: [\"_start\", \"_stop\", \"_time\", \"_value\"]) |> group() |> sort(columns: [\"_time\"]) |> aggregateWindow(every: w, fn: mean, createEmpty: false)\n\njoin(tables: {ac: ac, gti: gti}, on: [\"_time\"]) |> filter(fn: (r) => r._value_gti >= 50.0) |> map(fn: (r) => ({ _time: r._time, _field: \"AC power per sunlight\", _value: r._value_ac / r._value_gti })) |> group(columns: [\"_field\"])",
           "refId": "A"
         }
       ]
@@ -83,28 +84,18 @@
     {
       "id": 5,
       "type": "timeseries",
-      "title": "Pi CPU Usage",
-      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 12 },
+      "title": "Pi CPU / Memory Usage",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
       "datasource": { "type": "influxdb", "uid": "influxdb" },
       "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100 }, "overrides": [] },
       "targets": [
         {
-          "query": "from(bucket: \"solar_logging\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"cpu\" and r._field == \"usage_idle\" and r.cpu == \"cpu-total\") |> map(fn: (r) => ({ r with _value: 100.0 - r._value })) |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)",
+          "query": "from(bucket: \"solar_logging\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"cpu\" and r._field == \"usage_idle\" and r.cpu == \"cpu-total\") |> map(fn: (r) => ({ r with _value: 100.0 - r._value })) |> set(key: \"_field\", value: \"CPU\") |> keep(columns: [\"_start\", \"_stop\", \"_time\", \"_value\", \"_field\"]) |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)",
           "refId": "A"
-        }
-      ]
-    },
-    {
-      "id": 6,
-      "type": "timeseries",
-      "title": "Pi Memory Usage",
-      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 12 },
-      "datasource": { "type": "influxdb", "uid": "influxdb" },
-      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100 }, "overrides": [] },
-      "targets": [
+        },
         {
-          "query": "from(bucket: \"solar_logging\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"mem\" and r._field == \"used_percent\") |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)",
-          "refId": "A"
+          "query": "from(bucket: \"solar_logging\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"mem\" and r._field == \"used_percent\") |> set(key: \"_field\", value: \"memory\") |> keep(columns: [\"_start\", \"_stop\", \"_time\", \"_value\", \"_field\"]) |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)",
+          "refId": "B"
         }
       ]
     },
@@ -112,7 +103,7 @@
       "id": 7,
       "type": "timeseries",
       "title": "Pi Temperature",
-      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 12 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
       "datasource": { "type": "influxdb", "uid": "influxdb" },
       "fieldConfig": { "defaults": { "unit": "celsius" }, "overrides": [] },
       "targets": [
@@ -123,20 +114,10 @@
       ]
     },
     {
-      "id": 8,
-      "type": "timeseries",
-      "title": "Pi Power Consumption (not yet instrumented)",
-      "description": "No power sensor is wired up yet. Add an INA219/INA260 I2C HAT and a reader script following the same inputs.exec pattern used for the inverter poll, then point this panel at the new field.",
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 20 },
-      "datasource": { "type": "influxdb", "uid": "influxdb" },
-      "fieldConfig": { "defaults": { "unit": "watt" }, "overrides": [] },
-      "targets": []
-    },
-    {
       "id": 9,
       "type": "gauge",
       "title": "UPS Battery Charge",
-      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 28 },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 20 },
       "datasource": { "type": "influxdb", "uid": "influxdb" },
       "fieldConfig": {
         "defaults": {
@@ -166,7 +147,7 @@
       "type": "stat",
       "title": "UPS Status",
       "description": "Telegraf's upsd plugin models status as a separate tag per active NUT flag (status_OL / status_OB), present only while that flag is active — confirmed empirically by unplugging the UPS during testing, since the docs' description didn't match actual output. This query unions the last known-OL point and last known-OB point and keeps whichever is more recent, so it reflects true current status even though the underlying time range may contain both a past 'on line' period and a past 'on battery' period. Only OL/OB are tracked; other NUT flags (LB, HB, RB, etc.) aren't — extend the same pattern (a third unioned branch) if needed.",
-      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 28 },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 20 },
       "datasource": { "type": "influxdb", "uid": "influxdb" },
       "fieldConfig": {
         "defaults": {
@@ -197,7 +178,7 @@
       "type": "row",
       "title": "Weather",
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 36 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 28 },
       "panels": []
     },
     {
@@ -205,7 +186,7 @@
       "type": "timeseries",
       "title": "Cloud Cover vs. AC Power",
       "description": "Model cloud cover is Open-Meteo at the house (15-minute HRRR-based values). Station cloud cover comes from the SKY_STATION airport ceilometer (or the model when it's stale): FEW 19%, SCT 44%, BKN 75%, OVC 100%.",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 37 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 29 },
       "datasource": { "type": "influxdb", "uid": "influxdb" },
       "fieldConfig": {
         "defaults": { "unit": "watt" },
@@ -242,7 +223,7 @@
       "type": "timeseries",
       "title": "Sunlight vs. AC Power",
       "description": "Open-Meteo modelled irradiance at the house. 'on panels' (GTI) uses PANEL_TILT / PANEL_AZIMUTH from .env; 'horizontal' is GHI. AC power falling well below the GTI curve on a clear day points at soiling, shading or an inverter issue.",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 37 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 29 },
       "datasource": { "type": "influxdb", "uid": "influxdb" },
       "fieldConfig": {
         "defaults": { "unit": "watt" },
@@ -273,13 +254,14 @@
       "id": 14,
       "type": "timeseries",
       "title": "Outside Temperature vs. Heat Sink",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 45 },
+      "description": "'heat sink rise' is how far the inverter heat sink runs above the outside temperature (temp_sink minus outside, in °C, on the right axis with temp_sink). Both are averaged over at least 15 minutes, Telegraf's poll interval, so their points line up.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 37 },
       "datasource": { "type": "influxdb", "uid": "influxdb" },
       "fieldConfig": {
         "defaults": { "unit": "fahrenheit" },
         "overrides": [
           {
-            "matcher": { "id": "byRegexp", "options": "/temp_sink/" },
+            "matcher": { "id": "byRegexp", "options": "/temp_sink|rise/" },
             "properties": [
               { "id": "unit", "value": "celsius" },
               { "id": "custom.axisPlacement", "value": "right" }
@@ -295,6 +277,10 @@
         {
           "query": "from(bucket: \"solar_logging\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"inverter\" and r._field == \"temp_sink\") |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false) |> keep(columns: [\"_start\", \"_stop\", \"_time\", \"_value\", \"_field\"])",
           "refId": "B"
+        },
+        {
+          "query": "w = if int(v: v.windowPeriod) > int(v: 15m) then v.windowPeriod else 15m\nsink = from(bucket: \"solar_logging\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"inverter\" and r._field == \"temp_sink\") |> keep(columns: [\"_start\", \"_stop\", \"_time\", \"_value\"]) |> group() |> aggregateWindow(every: w, fn: mean, createEmpty: false)\noutside = from(bucket: \"solar_logging\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"weather_obs\" and r._field == \"temp_f\") |> keep(columns: [\"_start\", \"_stop\", \"_time\", \"_value\"]) |> group() |> sort(columns: [\"_time\"]) |> aggregateWindow(every: w, fn: mean, createEmpty: false)\n\njoin(tables: {sink: sink, outside: outside}, on: [\"_time\"]) |> map(fn: (r) => ({ _time: r._time, _field: \"heat sink rise\", _value: r._value_sink - (r._value_outside - 32.0) * 5.0 / 9.0 })) |> group(columns: [\"_field\"])",
+          "refId": "C"
         }
       ]
     },
@@ -303,7 +289,7 @@
       "type": "timeseries",
       "title": "Wind",
       "description": "Direction is where the wind comes from (0/360 = north, 90 = east), drawn as points on the right axis. No direction is logged in calm air.",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 45 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 37 },
       "datasource": { "type": "influxdb", "uid": "influxdb" },
       "fieldConfig": {
         "defaults": { "unit": "velocitymph", "min": 0 },
@@ -333,7 +319,7 @@
       "id": 16,
       "type": "state-timeline",
       "title": "Conditions",
-      "gridPos": { "h": 5, "w": 24, "x": 0, "y": 53 },
+      "gridPos": { "h": 5, "w": 24, "x": 0, "y": 45 },
       "datasource": { "type": "influxdb", "uid": "influxdb" },
       "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" } }, "overrides": [] },
       "options": { "showValue": "auto", "mergeValues": true, "rowHeight": 0.8, "legend": { "showLegend": false } },
@@ -349,7 +335,7 @@
       "type": "state-timeline",
       "title": "Weather Station Used",
       "description": "Which station supplied the measurements (temperature, humidity, wind), and which supplied the sky fields (conditions, cloud cover, visibility). 'model' means Open-Meteo filled in because no station had a fresh reading.",
-      "gridPos": { "h": 5, "w": 24, "x": 0, "y": 58 },
+      "gridPos": { "h": 5, "w": 24, "x": 0, "y": 50 },
       "datasource": { "type": "influxdb", "uid": "influxdb" },
       "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" } }, "overrides": [] },
       "options": { "showValue": "auto", "mergeValues": true, "rowHeight": 0.8, "legend": { "showLegend": false } },
