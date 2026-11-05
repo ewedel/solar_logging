@@ -1,3 +1,19 @@
+# Overview
+
+This repo provides a logging facility, expected to run on a Raspberry Pi 4. Similar Debian-based hosts may also work.
+
+This is meant only for use on a LAN, it is deliberately not secured for use exposed to the open internet.
+
+This logger is primarily concerned with logging data about a direct LAN-connected SolarEdge HD-Wave inverter. It also collects and records weather data, both to enhance the solar statistics and to provide a live weather view. The logger also records minimal status about a CyberPower UPS accessed via a CyberPower RMCARD205.
+
+Solar statistics and UPS status are provided via a Grafana dashboard, read access available without login.
+
+Weather information is incorporated in the Grafana dashboard, and is also made available via a separate web page suitable for display on an always-on tablet or similar.
+
+Note that no paid APIs are used. The solar inverter is accessed via Modbus TCP. If some other inverter conforms to the spec excerpt in file [hd_wave_modbus_tcp.pdf](hd_wave_modbus_tcp.pdf), then it may be supported with little or no extra work.
+
+Read on for many more AI-provided details on design, implementation and installation.
+
 # Solar Logging
 
 Telegraf + InfluxDB 2.x + Grafana stack for a Raspberry Pi 4, logging:
@@ -11,20 +27,20 @@ Dashboard is served by Grafana on the LAN, viewable without logging in (read-onl
 
 ## Files
 
-| Path | Purpose |
-|---|---|
-| `hd_wave_query.py` | Existing Modbus TCP reader for the inverter. Unmodified; imported by the Telegraf wrapper. |
-| `docker-compose.yml` | The four services: `influxdb`, `telegraf`, `grafana`, `weather`. |
-| `.env.example` | Template for secrets/config. Copy to `.env` and fill in real values — `.env` is git-ignored. |
-| `telegraf/Dockerfile` | Telegraf image + Python 3 + `pyModbusTCP`, so it can run the inverter poll itself. |
-| `telegraf/telegraf.conf` | Collection config: inverter poll + Pi host metrics, both on a shared 15-minute interval. |
-| `telegraf/hd_wave_telegraf.py` | Flattens `hd_wave_query.py`'s JSON into the shape Telegraf's parser expects. |
-| `grafana/provisioning/` | Auto-configures the InfluxDB datasource and loads the starter dashboard on first boot. |
-| `grafana/dashboards/solar_logging.json` | Starter dashboard: inverter panels, Pi health panels, UPS panels and a Weather row. |
-| `weather/weather_service.py` | Weather collector (NWS + Open-Meteo, with station failover) and the web server for the tablet page and Telegraf's JSON. |
-| `weather/static/index.html` | The tablet page: current conditions, wind compass rose, today's forecast, next 12 hours. |
-| `weather/find_station.py` | Copy of `weather_station/find_station.py`, used to search for a replacement station when every configured one fails. Re-copy it here after changing the original. |
-| `weather/Dockerfile` | `python:3.12-slim` + `requests`. |
+| Path                                    | Purpose                                                                                                                                                           |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hd_wave_query.py`                      | Existing Modbus TCP reader for the inverter. Unmodified; imported by the Telegraf wrapper.                                                                        |
+| `docker-compose.yml`                    | The four services: `influxdb`, `telegraf`, `grafana`, `weather`.                                                                                                  |
+| `.env.example`                          | Template for secrets/config. Copy to `.env` and fill in real values — `.env` is git-ignored.                                                                      |
+| `telegraf/Dockerfile`                   | Telegraf image + Python 3 + `pyModbusTCP`, so it can run the inverter poll itself.                                                                                |
+| `telegraf/telegraf.conf`                | Collection config: inverter poll + Pi host metrics, both on a shared 15-minute interval.                                                                          |
+| `telegraf/hd_wave_telegraf.py`          | Flattens `hd_wave_query.py`'s JSON into the shape Telegraf's parser expects.                                                                                      |
+| `grafana/provisioning/`                 | Auto-configures the InfluxDB datasource and loads the starter dashboard on first boot.                                                                            |
+| `grafana/dashboards/solar_logging.json` | Starter dashboard: inverter panels, Pi health panels, UPS panels and a Weather row.                                                                               |
+| `weather/weather_service.py`            | Weather collector (NWS + Open-Meteo, with station failover) and the web server for the tablet page and Telegraf's JSON.                                           |
+| `weather/static/index.html`             | The tablet page: current conditions, wind compass rose, today's forecast, next 12 hours.                                                                          |
+| `weather/find_station.py`               | Copy of `weather_station/find_station.py`, used to search for a replacement station when every configured one fails. Re-copy it here after changing the original. |
+| `weather/Dockerfile`                    | `python:3.12-slim` + `requests`.                                                                                                                                  |
 
 ## Deploying to the Pi
 
@@ -53,6 +69,7 @@ The `Solar Logging` dashboard should be there already (provisioned automatically
 The Pi is on a UPS, but UPS capacity is finite, so an extended outage still ends in a hard power cut unless the Pi shuts itself down first.
 
 **Already handled by this stack's design, no action needed:**
+
 - InfluxDB 2.x's storage engine is WAL-based and crash-tolerant — an unclean stop just replays the WAL on next start. Worst case: losing the single most recent (≤15 minute) sample, not the database.
 - Raspberry Pi OS's default ext4 filesystem is journaled and recovers from a hard power cut without a full corruption/reformat.
 - All three containers have `restart: unless-stopped`, so after any reboot — clean or forced — the stack comes back up on its own once Docker starts.
@@ -70,11 +87,13 @@ sudo apt install nut nut-snmp
 On the UPS's own web UI (`http://192.168.1.60`), SNMPv3 is already enabled with a read-only user `monitorx` (auth-only, SHA, no encryption). SNMPv1 is left disabled — NUT only needs one protocol.
 
 `/etc/nut/nut.conf`:
+
 ```
 MODE=standalone
 ```
 
 `/etc/nut/ups.conf`:
+
 ```
 [cyberpower]
     driver = snmp-ups
@@ -86,13 +105,17 @@ MODE=standalone
     authPassword = <the configured passphrase>
     mibs = cyberpower
 ```
+
 Keep this file `chmod 640`, owned by the `nut` user — the passphrase never goes in `.env` or the git repo. Before wiring up `upsmon`, confirm it actually works:
+
 ```bash
 snmpwalk -v3 -u monitorx -l authNoPriv -a SHA -A '<passphrase>' 192.168.1.60 .1.3.6.1.2.1.33
 ```
+
 If that comes back empty, try `mibs = ietf` instead of `cyberpower` — the generic UPS-MIB mapping, in case this NMC firmware doesn't support CyberPower's vendor extensions well. SNMPv1 remains a documented fallback only if v3 turns out to be flaky on this card's firmware.
 
 `/etc/nut/upsd.users` (a fresh local password, unrelated to the UPS's own SNMP credentials):
+
 ```
 [monuser]
     password = <generate a new local password>
@@ -100,22 +123,27 @@ If that comes back empty, try `mibs = ietf` instead of `cyberpower` — the gene
 ```
 
 `/etc/nut/upsmon.conf`:
+
 ```
 MONITOR cyberpower@localhost 1 monuser <password> master
 SHUTDOWNCMD "/sbin/shutdown -h now"
 ```
+
 The actual low-battery threshold is configured on the UPS itself (its NMC lets you set the "low battery" runtime/percentage) — leave it with a reasonable safety margin (e.g. 20-30% remaining) rather than 0%.
 
 Enable at boot:
+
 ```bash
 sudo systemctl enable --now nut-server nut-monitor
 ```
 
 Verify:
+
 ```bash
 sudo systemctl status nut-server nut-monitor
 upsc cyberpower@localhost
 ```
+
 `upsc` should return live battery charge/load/status, not a connection or auth error.
 
 **Important caveat:** this only works if the network path between the Pi and the UPS's management card stays powered during the outage. If the switch between them isn't itself on a UPS, the Pi loses visibility into the UPS's status exactly when it matters most — worth checking now, not after the first real outage. Also worth testing the shutdown path deliberately (a controlled test, not waiting for a real outage) before trusting it.
@@ -125,16 +153,20 @@ upsc cyberpower@localhost
 The NUT setup above (for graceful shutdown) already has `upsd` running natively on the Pi with live UPS data available via `upsc`. Telegraf has a built-in plugin for this — `inputs.upsd` (added in Telegraf v1.24.0; not to be confused with a plugin literally named "nut", which doesn't exist) — so getting battery charge and status into the same dashboard is mostly config, not new infrastructure.
 
 1. **Add a second, read-only NUT user** for Telegraf, distinct from `upsmon`'s `monuser` and from the UPS's own SNMPv3 credentials — least-privilege, and lets you rotate/revoke it independently. Add to `/etc/nut/upsd.users`:
+
    ```
    [telegraf]
        password = <a new random password>
    ```
+
    (No `upsmon master` line needed here — that role is only for the shutdown-trigger client.)
 
 2. **Make `upsd` reachable from the Telegraf container.** By default it only listens on `127.0.0.1`, which is fine for `upsmon`/`upsc` running on the same host, but not reachable from inside Docker. In `/etc/nut/upsd.conf`, **replace** the `LISTEN 127.0.0.1 3493` line with just:
+
    ```
    LISTEN 0.0.0.0 3493
    ```
+
    Don't keep both — `upsd` deliberately refuses to bind the wildcard address when a more specific one (`127.0.0.1`) is already bound on the same port (logged as `not listening on 0.0.0.0 port 3493`, not an error, just silently skipped), so having both lines leaves you back on `127.0.0.1` only. A single `0.0.0.0` binding already accepts connections to `127.0.0.1` too, so local `upsc`/`upsmon` keep working unchanged. This exposes the UPS monitor port to the LAN — the same trust boundary already accepted for Grafana's port 3000, not forwarded to the WAN. If you'd rather scope it tighter, bind to the Docker bridge network's gateway address instead of `0.0.0.0` (find it with `docker network inspect solar_logging_default | grep Gateway`).
 
 3. Restart NUT's server: `sudo systemctl restart nut-server`.
@@ -153,6 +185,7 @@ The Pi 4 has no built-in power sensor, so this metric is deliberately skipped fo
 2. Write a small reader script (e.g. using `adafruit-circuitpython-ina219`) that prints flat JSON like `{"power_w": 12.3}`, following the exact same pattern as `telegraf/hd_wave_telegraf.py`.
 3. Add a second `[[inputs.exec]]` block to `telegraf.conf` pointing at it.
 4. Pass the I2C device through to the Telegraf container in `docker-compose.yml`:
+
    ```yaml
    devices:
      - "/dev/i2c-1:/dev/i2c-1"
@@ -163,10 +196,10 @@ The Pi 4 has no built-in power sensor, so this metric is deliberately skipped fo
 
 The `weather` container polls the weather APIs on its own timers, keeps the latest values in memory (nothing is written to the SD card), and serves:
 
-| URL | What |
-|---|---|
-| `http://<pi-ip>:8080/` | Tablet page: current conditions, wind compass rose, today's NWS forecast, next 12 hours, sunrise/sunset, active NWS alerts. Refreshes itself every minute. |
-| `/api/current.json` | Everything the page shows. |
+| URL                                | What                                                                                                                                                                                                     |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `http://<pi-ip>:8080/`             | Tablet page: current conditions, wind compass rose, today's NWS forecast, next 12 hours, sunrise/sunset, active NWS alerts. Refreshes itself every minute.                                               |
+| `/api/current.json`                | Everything the page shows.                                                                                                                                                                               |
 | `/api/obs.json`, `/api/model.json` | Flat JSON for Telegraf, which stores it as the `weather_obs` and `weather_model` measurements every 15 minutes. These return HTTP 503 when the service has nothing fresh, so no stale point gets logged. |
 
 **Two data sources, each used for what it does best:**
